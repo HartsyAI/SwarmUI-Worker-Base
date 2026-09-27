@@ -161,3 +161,23 @@ def test_shadow_tree_rebuild_replaces_old_tree_and_survives_cycles(tmp_path):
 def test_shadow_tree_missing_root_is_a_clear_error(tmp_path):
     with pytest.raises(FileNotFoundError, match="does not exist"):
         build_shadow_tree(str(tmp_path / "nope"), str(tmp_path / "shadow"))
+
+
+def test_tls_config_must_be_paired_and_exist(tmp_path):
+    with pytest.raises(ConfigError, match="set together"):
+        WorkerConfig.from_env({"SWARMUI_TLS_CERT": "/x"})
+    with pytest.raises(ConfigError, match="does not exist"):
+        WorkerConfig.from_env({"SWARMUI_TLS_CERT": "/nope.crt", "SWARMUI_TLS_KEY": "/nope.key"})
+    (tmp_path / "c").write_text("x")
+    (tmp_path / "k").write_text("x")
+    c = WorkerConfig.from_env({"SWARMUI_TLS_CERT": str(tmp_path / "c"), "SWARMUI_TLS_KEY": str(tmp_path / "k")})
+    assert c.tls_cert.endswith("c")
+
+
+def test_lease_limits_honor_client_values_within_bounds():
+    from swarmui_worker.supervisor import Supervisor
+    sup = Supervisor(WorkerConfig.from_env({"SWARMUI_MAX_LEASE_SECONDS": "3600"}))
+    assert sup.lease_limits() == (120.0, 600.0, 3600.0)
+    assert sup.lease_limits(300, 900, 1800) == (300.0, 900.0, 1800.0)
+    # Out-of-range requests are clamped; the cap can only be lowered.
+    assert sup.lease_limits(1, 99999, 99999) == (5.0, 3600.0, 3600.0)

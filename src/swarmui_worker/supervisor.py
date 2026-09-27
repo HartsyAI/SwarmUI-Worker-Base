@@ -21,6 +21,7 @@ import os
 import shutil
 import threading
 from dataclasses import dataclass
+from typing import Optional
 
 from .config import WorkerConfig, generate_token
 from .gateway import Gateway
@@ -61,7 +62,8 @@ class Supervisor:
         write_settings(self.config.swarm_dir, model_root)
         if self.config.token:
             await self.gateway.set_token(self.config.token)
-        await self.gateway.start(self.config.public_host, self.config.public_port)
+        await self.gateway.start(self.config.public_host, self.config.public_port,
+                                 self.config.tls_cert, self.config.tls_key)
         await self.process.start()
         await self.process.wait_until_up(self.api, self.config.boot_timeout)
         self.gateway.set_upstream_ready(True)
@@ -78,9 +80,26 @@ class Supervisor:
         log.info("Lease %d started", self._lease_number)
         return LeaseInfo(token=token, lease_number=self._lease_number)
 
-    async def wait_for_release(self) -> str:
+    def lease_limits(self, idle_seconds: Optional[float] = None, startup_grace_seconds: Optional[float] = None,
+                     max_seconds: Optional[float] = None) -> tuple[float, float, float]:
+        """The limits for one lease: the client's requested values where given, within safe bounds.
+
+        The idle window and startup grace are the client's to choose (5s to 1h). The lease cap may only be
+        lowered, never raised: it exists to stay under the provider's execution timeout.
+        """
+        def pick(value: Optional[float], default: float, low: float, high: float) -> float:
+            if value is None:
+                return default
+            return min(max(float(value), low), high)
+        cap = self.config.max_seconds
+        return (pick(idle_seconds, self.config.idle_seconds, 5, 3600),
+                pick(startup_grace_seconds, self.config.startup_grace_seconds, 5, 3600),
+                pick(max_seconds, cap, 60, cap) if cap > 0 else pick(max_seconds, 0, 60, 7 * 24 * 3600))
+
+    async def wait_for_release(self, idle_seconds: Optional[float] = None, startup_grace_seconds: Optional[float] = None,
+                               max_seconds: Optional[float] = None) -> str:
         """Blocks until the lease should end, and returns why."""
-        monitor = IdleMonitor(self.config.idle_seconds, self.config.startup_grace_seconds, self.config.max_seconds)
+        monitor = IdleMonitor(*self.lease_limits(idle_seconds, startup_grace_seconds, max_seconds))
         failures = 0
         while True:
             if not self.process.running:
@@ -160,8 +179,12 @@ class BackgroundSupervisor:
     async def begin_lease(self) -> LeaseInfo:
         return await self._await(self._supervisor.begin_lease())
 
-    async def wait_for_release(self) -> str:
-        return await self._await(self._supervisor.wait_for_release())
+    def lease_limits(self, *args, **kwargs) -> tuple[float, float, float]:
+        return self._supervisor.lease_limits(*args, **kwargs)
+
+    async def wait_for_release(self, idle_seconds: Optional[float] = None, startup_grace_seconds: Optional[float] = None,
+                               max_seconds: Optional[float] = None) -> str:
+        return await self._await(self._supervisor.wait_for_release(idle_seconds, startup_grace_seconds, max_seconds))
 
     async def end_lease(self) -> None:
         await self._await(self._supervisor.end_lease())

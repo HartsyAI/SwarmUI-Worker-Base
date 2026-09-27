@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import logging
+import ssl
 import time
 from typing import Mapping, Optional
 from urllib.parse import urlencode
@@ -125,12 +126,17 @@ class Gateway:
         app.on_cleanup.append(self._on_cleanup)
         return app
 
-    async def start(self, host: str, port: int) -> None:
-        """Starts listening."""
+    async def start(self, host: str, port: int, tls_cert: str = "", tls_key: str = "") -> None:
+        """Starts listening, over TLS when a certificate is given."""
+        context = None
+        if tls_cert:
+            context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.load_cert_chain(tls_cert, tls_key)
         self._runner = web.AppRunner(self.make_app(), access_log=None)
         await self._runner.setup()
-        await web.TCPSite(self._runner, host, port).start()
-        log.info("Gateway listening on %s:%d", host, port)
+        await web.TCPSite(self._runner, host, port, ssl_context=context).start()
+        log.info("Gateway listening on %s://%s:%d", "https" if context else "http", host, port)
 
     async def stop(self) -> None:
         """Stops listening and closes every connection."""
@@ -191,7 +197,9 @@ class Gateway:
         assert self._client is not None
         url = self._upstream + request.rel_url.path_qs
         headers = _without_worker_cookie(_forward_headers(request.headers, _STRIPPED_REQUEST))
-        data = request.content if request.body_exists else None
+        # Buffered, not streamed: SwarmUI's API rejects requests without an exact Content-Length, which a
+        # chunked upload would not carry. API bodies are JSON; responses still stream.
+        data = await request.read() if request.body_exists else None
         try:
             async with self._client.request(request.method, url, headers=headers, data=data,
                                             allow_redirects=False) as upstream:

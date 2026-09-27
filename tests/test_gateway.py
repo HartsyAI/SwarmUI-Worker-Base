@@ -23,6 +23,9 @@ def _free_port() -> int:
 async def _start_upstream(port: int, seen: list) -> web.AppRunner:
     async def echo(request: web.Request) -> web.StreamResponse:
         seen.append(dict(request.headers))
+        # Like SwarmUI's API: a body must come with an exact Content-Length.
+        if request.method == "POST" and request.headers.get("Transfer-Encoding", "").lower() == "chunked":
+            return web.json_response({"error": "Request has invalid content length"}, status=400)
         body = await request.read()
         resp = web.json_response({"path": request.path_qs, "method": request.method, "body": body.decode()})
         resp.headers.add("Set-Cookie", "a=1")
@@ -89,7 +92,11 @@ def test_proxies_with_token_and_strips_credentials_and_forwarding_headers():
         async with Harness() as h, aiohttp.ClientSession() as c:
             headers = {"Authorization": f"Bearer {TOKEN}", "X-Forwarded-For": "1.2.3.4",
                        "Cookie": f"{COOKIE_NAME}={TOKEN}; keep=me"}
-            async with c.post(h.base + "/API/Thing?x=1", data="hello", headers=headers) as r:
+            async def body_stream():
+                yield b"hel"
+                yield b"lo"
+            # A chunked upload from the client must still reach SwarmUI with a Content-Length.
+            async with c.post(h.base + "/API/Thing?x=1", data=body_stream(), headers=headers) as r:
                 assert r.status == 200
                 data = await r.json()
                 assert data == {"path": "/API/Thing?x=1", "method": "POST", "body": "hello"}
@@ -176,4 +183,39 @@ def test_token_is_redacted_from_logs():
     async def body():
         async with Harness():
             assert logs.redact(f"header was Bearer {TOKEN}") == f"header was Bearer {logs.REDACTED}"
+    run(body())
+
+
+def test_tls_gateway(tmp_path):
+    import shutil
+    import ssl
+    import subprocess
+    import pytest
+    if shutil.which("openssl") is None:
+        pytest.skip("openssl not available")
+    cert, key = tmp_path / "c.pem", tmp_path / "k.pem"
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=127.0.0.1",
+                    "-addext", "subjectAltName=IP:127.0.0.1", "-keyout", str(key), "-out", str(cert)],
+                   check=True, capture_output=True)
+
+    async def body():
+        h = Harness()
+        h.upstream = await _start_upstream(h.upstream_port, h.seen)
+        await h.gateway.start("127.0.0.1", h.public_port, str(cert), str(key))
+        h.gateway.set_upstream_ready(True)
+        await h.gateway.set_token(TOKEN)
+        try:
+            trusted = ssl.create_default_context(cafile=str(cert))
+            async with aiohttp.ClientSession() as c:
+                async with c.get(f"https://127.0.0.1:{h.public_port}/x", ssl=trusted,
+                                 headers={"Authorization": f"Bearer {TOKEN}"}) as r:
+                    assert r.status == 200
+                try:
+                    async with c.get(f"https://127.0.0.1:{h.public_port}/x"):
+                        raise AssertionError("untrusted certificate was accepted")
+                except aiohttp.ClientConnectorCertificateError:
+                    pass
+        finally:
+            await h.gateway.stop()
+            await h.upstream.cleanup()
     run(body())

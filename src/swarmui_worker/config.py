@@ -92,6 +92,11 @@ class WorkerConfig:
     """Seconds between activity checks."""
     boot_timeout: float
     """Longest SwarmUI may take to start answering."""
+    tls_cert: str
+    """PEM certificate for the gateway, or empty for plain HTTP (e.g. behind RunPod's HTTPS proxy).
+    Vast.ai instances provide one at /etc/instance.crt, signed by Vast's root CA."""
+    tls_key: str
+    """PEM private key matching `tls_cert`."""
     allow_url_login: bool
     """Allow a browser to log in once with ?worker_token=..., which sets an HttpOnly cookie.
     Off by default because tokens in URLs can end up in proxy logs and browser history."""
@@ -116,6 +121,13 @@ class WorkerConfig:
             elif len(token) < MIN_TOKEN_LENGTH:
                 raise ConfigError(f"SWARMUI_WORKER_TOKEN must be at least {MIN_TOKEN_LENGTH} characters")
         swarm_dir = env.get("SWARMUI_DIR", "/opt/swarmui")
+        tls_cert = env.get("SWARMUI_TLS_CERT", "").strip()
+        tls_key = env.get("SWARMUI_TLS_KEY", "").strip()
+        if bool(tls_cert) != bool(tls_key):
+            raise ConfigError("SWARMUI_TLS_CERT and SWARMUI_TLS_KEY must be set together")
+        for name, path in (("SWARMUI_TLS_CERT", tls_cert), ("SWARMUI_TLS_KEY", tls_key)):
+            if path and not os.path.isfile(path):
+                raise ConfigError(f"{name} points to '{path}', which does not exist")
         return cls(
             swarm_dir=swarm_dir,
             swarm_port=swarm_port,
@@ -131,6 +143,8 @@ class WorkerConfig:
             max_seconds=_get_float(env, "SWARMUI_MAX_LEASE_SECONDS", 3600.0, 0.0),
             poll_interval=_get_float(env, "SWARMUI_POLL_INTERVAL", 5.0, 0.5),
             boot_timeout=_get_float(env, "SWARMUI_BOOT_TIMEOUT", 900.0, 10.0),
+            tls_cert=tls_cert,
+            tls_key=tls_key,
             allow_url_login=_get_bool(env, "SWARMUI_WORKER_ALLOW_URL_LOGIN", False),
             log_json=_get_bool(env, "SWARMUI_LOG_JSON", True),
             log_level=env.get("SWARMUI_LOG_LEVEL", "INFO").upper(),
