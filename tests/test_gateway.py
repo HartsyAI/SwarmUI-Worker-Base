@@ -219,3 +219,15 @@ def test_tls_gateway(tmp_path):
             await h.gateway.stop()
             await h.upstream.cleanup()
     run(body())
+
+
+def test_no_compression_unless_the_client_asks():
+    async def body():
+        async with Harness() as h, aiohttp.ClientSession(skip_auto_headers=["Accept-Encoding"]) as c:
+            async with c.get(h.base + "/x", headers={"Authorization": f"Bearer {TOKEN}"}) as r:
+                assert r.status == 200
+            assert h.seen[-1].get("Accept-Encoding") == "identity"
+            async with c.get(h.base + "/x", headers={"Authorization": f"Bearer {TOKEN}", "Accept-Encoding": "gzip"}) as r:
+                assert r.status == 200
+            assert h.seen[-1].get("Accept-Encoding") == "gzip"
+    run(body())

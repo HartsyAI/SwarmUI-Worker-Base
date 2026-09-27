@@ -200,6 +200,10 @@ class Gateway:
         # Buffered, not streamed: SwarmUI's API rejects requests without an exact Content-Length, which a
         # chunked upload would not carry. API bodies are JSON; responses still stream.
         data = await request.read() if request.body_exists else None
+        # Only compress if the client asked to: the upstream client would otherwise add its own
+        # Accept-Encoding, and the compressed body would reach a client that cannot decode it.
+        if "Accept-Encoding" not in headers:
+            headers["Accept-Encoding"] = "identity"
         try:
             async with self._client.request(request.method, url, headers=headers, data=data,
                                             allow_redirects=False) as upstream:
