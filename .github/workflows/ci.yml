@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install "aiohttp>=3.10,<4" "pytest>=8" pyflakes
+      - run: python -m pyflakes src docker tests
+      - run: python -m pytest -q
+
+  image:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [comfyui, hartsyinference]
+    env:
+      LOCAL_TAG: swarmui-worker-base:ci-${{ matrix.backend }}
+      # Pushes need Docker Hub credentials; forks and repos without them still build and test.
+      CAN_PUSH: ${{ secrets.DOCKERHUB_TOKEN != '' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    steps:
+      # The ComfyUI image is large (CUDA runtime plus torch); a hosted runner starts with ~14 GB free.
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost \
+                      /usr/local/share/powershell /usr/share/swift /opt/hostedtoolcache
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: ${{ env.LOCAL_TAG }}
+          build-args: |
+            BACKEND=${{ matrix.backend }}
+            VERSION=${{ github.ref_name }}
+            REVISION=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.backend }}
+          cache-to: type=gha,mode=min,scope=${{ matrix.backend }}
+
+      - name: Smoke test (CPU)
+        run: bash tests/smoke/smoke.sh "$LOCAL_TAG" "${{ matrix.backend }}"
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-${{ matrix.backend }}
+          path: smoke-container.log
+          if-no-files-found: ignore
+
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.LOCAL_TAG }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          scanners: vuln
+
+      - name: Image tags
+        id: meta
+        if: env.CAN_PUSH == 'true'
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: hartsy/swarmui-worker-base
+          flavor: |
+            latest=false
+            suffix=-${{ matrix.backend }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=pr
+            type=edge,branch=main
+
+      - name: Log in to Docker Hub
+        if: env.CAN_PUSH == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push
+        if: env.CAN_PUSH == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BACKEND=${{ matrix.backend }}
+            VERSION=${{ github.ref_name }}
+            REVISION=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.backend }}
