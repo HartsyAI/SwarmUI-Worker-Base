@@ -4,9 +4,9 @@ A provider-neutral Docker image that runs [SwarmUI](https://github.com/mcmonkeyp
 
 | Image | Provider | Repo |
 |---|---|---|
-| `hartsy/swarmui-worker-base` | none (this repo) | [SwarmUI-Worker-Base](https://github.com/HartsyAI/SwarmUI-Worker-Base) |
-| `hartsy/swarmui-worker-runpod` | RunPod Serverless and Pods | [RunPod-Worker-SwarmUI](https://github.com/HartsyAI/RunPod-Worker-SwarmUI) |
-| `hartsy/swarmui-worker-vast` | Vast.ai Serverless and Instances | [Vast-Worker-SwarmUI](https://github.com/HartsyAI/Vast-Worker-SwarmUI) |
+| `kalebbroo/swarmui-worker-base` | none (this repo) | [SwarmUI-Worker-Base](https://github.com/HartsyAI/SwarmUI-Worker-Base) |
+| `kalebbroo/swarmui-worker-runpod` | RunPod Serverless and Pods | [RunPod-Worker-SwarmUI](https://github.com/HartsyAI/RunPod-Worker-SwarmUI) |
+| `kalebbroo/swarmui-worker-vast` | Vast.ai Serverless and Instances | [Vast-Worker-SwarmUI](https://github.com/HartsyAI/Vast-Worker-SwarmUI) |
 
 The workers are designed for the [Cloud Backends](https://github.com/HartsyAI/SwarmUI-CloudBackends) SwarmUI extension, which starts them on demand, sends generations to them, and lets them shut down when idle.
 
@@ -21,7 +21,7 @@ The workers are designed for the [Cloud Backends](https://github.com/HartsyAI/Sw
 
 ## Tags
 
-Images are published to Docker Hub as `hartsy/swarmui-worker-base:<version>-<backend>`:
+Images are published to Docker Hub as `kalebbroo/swarmui-worker-base:<version>-<backend>`:
 
 - `<backend>` is `comfyui` (the full ComfyUI backend) or `hartsyinference` (Hartsy's pure C# backend: a smaller image with a faster cold start).
 - `<version>` is a release such as `1.0.0`. `edge-<backend>` tracks `main` and is not for production.
@@ -37,7 +37,7 @@ docker run --gpus all -p 7801:7801 \
   -e SWARMUI_WORKER_TOKEN="$(openssl rand -base64 48)" \
   -e SWARMUI_MODEL_ROOT=/workspace/models \
   -v /path/to/models:/workspace/models \
-  hartsy/swarmui-worker-base:1.0.0-comfyui
+  kalebbroo/swarmui-worker-base:1.0.0-comfyui
 ```
 
 Connect a SwarmUI to it with a **Swarm API** backend, whose address is `http://<host>:7801` and whose `AuthorizationHeader` is `Bearer <token>`.
@@ -81,7 +81,7 @@ The build boots SwarmUI once, on CPU, so SwarmUI installs its backend's dependen
 
 ## Building a provider image
 
-A provider image starts `FROM hartsy/swarmui-worker-base:<version>-<backend>`, adds its provider SDK to `/opt/worker/venv`, and drives leases through `BackgroundSupervisor`:
+A provider image starts `FROM kalebbroo/swarmui-worker-base:<version>-<backend>`, adds its provider SDK to `/opt/worker/venv`, and drives leases through `BackgroundSupervisor`:
 
 ```python
 from swarmui_worker.config import WorkerConfig

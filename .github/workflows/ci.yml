@@ -37,7 +37,7 @@ jobs:
     env:
       LOCAL_TAG: swarmui-worker-base:ci-${{ matrix.backend }}
       # Pushes need Docker Hub credentials; forks and repos without them still build and test.
-      # Publishing is opt-in: set the PUBLISH_IMAGES repo variable to 'true' once the Docker Hub secrets can push to hartsy/.
+      # Publishing is opt-in: set the PUBLISH_IMAGES repo variable to 'true' once the Docker Hub secrets can push to kalebbroo/.
       CAN_PUSH: ${{ vars.PUBLISH_IMAGES == 'true' && secrets.DOCKERHUB_TOKEN != '' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       # The ComfyUI image is large (CUDA runtime plus torch); a hosted runner starts with ~14 GB free.
@@ -89,7 +89,7 @@ jobs:
         if: env.CAN_PUSH == 'true'
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: hartsy/swarmui-worker-base
+          images: kalebbroo/swarmui-worker-base
           flavor: |
             latest=false
             suffix=-${{ matrix.backend }}

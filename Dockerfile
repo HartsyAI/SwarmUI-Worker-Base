@@ -3,8 +3,8 @@
 # Provider-neutral SwarmUI worker image by Hartsy.
 #
 # Build one image per backend:
-#   docker build --build-arg BACKEND=comfyui         -t hartsy/swarmui-worker-base:dev-comfyui .
-#   docker build --build-arg BACKEND=hartsyinference -t hartsy/swarmui-worker-base:dev-hartsyinference .
+#   docker build --build-arg BACKEND=comfyui         -t kalebbroo/swarmui-worker-base:dev-comfyui .
+#   docker build --build-arg BACKEND=hartsyinference -t kalebbroo/swarmui-worker-base:dev-hartsyinference .
 #
 # Provider images (RunPod, Vast.ai) build FROM this one and add only their provider adapter.
 
