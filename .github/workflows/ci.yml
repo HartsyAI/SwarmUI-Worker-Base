@@ -83,6 +83,8 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           scanners: vuln
+          # The ComfyUI image carries multi-GB CUDA libraries; the default 5m deadline expires mid-analysis.
+          timeout: 30m
 
       - name: Image tags
         id: meta
