@@ -9,7 +9,7 @@
 # Provider images (RunPod, Vast.ai) build FROM this one and add only their provider adapter.
 
 ARG CUDA_IMAGE=nvidia/cuda:12.8.1-runtime-ubuntu24.04
-ARG SWARMUI_REF=e2c35f354dd9411b64037e18abf319927260609d
+ARG SWARMUI_REF=b5d28088f20b0703155d9bb57fa41a39bb62c8fe
 
 # ── Stage 1: build SwarmUI (and the HartsyInference extension) with the .NET SDK ──────────────────
 FROM mcr.microsoft.com/dotnet/sdk:8.0-noble AS swarm-build
@@ -18,12 +18,17 @@ ARG BACKEND=comfyui
 ARG SWARMUI_REPO=https://github.com/mcmonkeyprojects/SwarmUI
 ARG SWARMUI_REF
 ARG HARTSYINFERENCE_REPO=https://github.com/HartsyAI/SwarmUI-HartsyInference-Backend
-ARG HARTSYINFERENCE_REF=2bba9053e8789a0099d91098c1d2bcc90df6db6f
+# The HartsyInference extension tracks its main branch, which uses the newest published engine. CI passes the resolved
+# commit and engine version, so the build cache never serves an older engine. A local rebuild with the defaults can reuse
+# a cached build; pass both build args, or --no-cache-filter swarm-build, to get the newest.
+ARG HARTSYINFERENCE_REF=main
+ARG HARTSYINFERENCE_ENGINE=latest
 
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 COPY docker/build_swarmui.sh /build/build_swarmui.sh
 RUN BACKEND="$BACKEND" SWARMUI_REPO="$SWARMUI_REPO" SWARMUI_REF="$SWARMUI_REF" \
     HARTSYINFERENCE_REPO="$HARTSYINFERENCE_REPO" HARTSYINFERENCE_REF="$HARTSYINFERENCE_REF" \
+    HARTSYINFERENCE_ENGINE="$HARTSYINFERENCE_ENGINE" \
     bash /build/build_swarmui.sh
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────────────────────────

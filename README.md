@@ -18,13 +18,14 @@ The workers are designed for the [Cloud Backends](https://github.com/HartsyAI/Sw
 - **Starts clean for every lease.** A new lease gets a new token. Ending a lease closes every open connection, interrupts anything still generating, and wipes outputs, so the next holder of a warm worker cannot reach the previous one's session or images.
 - **Fails safe.** If SwarmUI stops answering for five minutes (or the idle window, if longer), the lease ends. If SwarmUI exits, the worker process exits too, so the provider replaces it.
 - **Keeps shared model storage safe.** When models live on a volume shared by several workers, each worker reads them through a private tree of symlinks, so SwarmUI's per-folder metadata databases are never written to shared storage.
-- **Starts fast.** SwarmUI, the backend, and every Python dependency the backend installs on first run are baked in. SwarmUI, ComfyUI and HartsyInference are pinned to commits. Auto-update is off. A cold worker downloads nothing.
+- **Starts fast.** SwarmUI, the backend, and every Python dependency the backend installs on first run are baked in. SwarmUI and ComfyUI are pinned to commits; HartsyInference uses the newest published engine at build time. Auto-update is off. A cold worker downloads nothing.
 
 ## Tags
 
 Images are published to Docker Hub as `kalebbroo/swarmui-worker-base:<version>-<backend>`:
 
 - `<backend>` is `comfyui` (the full ComfyUI backend) or `hartsyinference` (Hartsy's pure C# backend: a smaller image with a faster cold start).
+- Host drivers: `comfyui` needs NVIDIA driver 570 or newer (CUDA 12.8). `hartsyinference` needs driver 580 or newer (CUDA 13): its GPU kernels ship as PTX ISA 9.0, which the host driver compiles.
 - `<version>` is a release such as `1.0.0`, or `1.0` for the newest `1.0.x`. `edge-<backend>` tracks `main` and is not for production.
 
 Always pin a release version in production.
@@ -73,12 +74,14 @@ docker build --build-arg BACKEND=comfyui -t swarmui-worker-base:local-comfyui .
 docker build --build-arg BACKEND=hartsyinference -t swarmui-worker-base:local-hartsyinference .
 ```
 
+A repeat `hartsyinference` build can reuse Docker's cached SwarmUI stage, and with it an older engine. To get the newest, pass `--no-cache-filter swarm-build`, or pin both `--build-arg HARTSYINFERENCE_REF=<commit>` and `--build-arg HARTSYINFERENCE_ENGINE=<version>` (CI does the latter).
+
 | Build argument | Default | Meaning |
 |---|---|---|
 | `BACKEND` | `comfyui` | `comfyui` or `hartsyinference`. |
 | `SWARMUI_REF` | pinned commit | SwarmUI commit to build. |
 | `COMFYUI_REF` | pinned commit | ComfyUI commit (`comfyui` only). |
-| `HARTSYINFERENCE_REF` | pinned commit | HartsyInference extension commit (`hartsyinference` only). |
+| `HARTSYINFERENCE_REF` | `main` | HartsyInference extension commit or branch (`hartsyinference` only). Its `main` always uses the newest published engine; the version an image got is in `/opt/swarmui/src/bin/hartsyinference-engine-version`. |
 | `TORCH_INDEX_URL` | CUDA 12.8 wheels | PyTorch wheel index (`comfyui` only). CUDA 12.8 needs host driver 570 or newer. |
 
 The build boots SwarmUI once, on CPU, so SwarmUI installs its backend's dependencies itself. It fails the build if the backend doesn't reach `running`, or if SwarmUI tries to rebuild an extension (the runtime image has no .NET SDK).
