@@ -25,6 +25,7 @@ The workers are designed for the [Cloud Backends](https://github.com/HartsyAI/Sw
 Images are published to Docker Hub as `kalebbroo/swarmui-worker-base:<version>-<backend>`:
 
 - `<backend>` is `comfyui` (the full ComfyUI backend) or `hartsyinference` (Hartsy's pure C# backend: a smaller image with a faster cold start).
+- Host drivers: `comfyui` needs NVIDIA driver 570 or newer (CUDA 12.8). `hartsyinference` needs driver 580 or newer (CUDA 13): its GPU kernels ship as PTX ISA 9.0, which the host driver compiles.
 - `<version>` is a release such as `1.0.0`, or `1.0` for the newest `1.0.x`. `edge-<backend>` tracks `main` and is not for production.
 
 Always pin a release version in production.
