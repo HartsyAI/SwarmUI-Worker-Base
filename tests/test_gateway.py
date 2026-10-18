@@ -10,6 +10,11 @@ from aiohttp import web
 
 from swarmui_worker import logs
 from swarmui_worker.gateway import COOKIE_NAME, Gateway
+from yarl import URL as yarl_url_cls
+
+
+def yarl_url(url: str) -> yarl_url_cls:
+    return yarl_url_cls(url, encoded=True)
 
 TOKEN = "t" * 48
 
@@ -27,7 +32,8 @@ async def _start_upstream(port: int, seen: list) -> web.AppRunner:
         if request.method == "POST" and request.headers.get("Transfer-Encoding", "").lower() == "chunked":
             return web.json_response({"error": "Request has invalid content length"}, status=400)
         body = await request.read()
-        resp = web.json_response({"path": request.path_qs, "method": request.method, "body": body.decode()})
+        resp = web.json_response({"path": request.path_qs, "raw": request.raw_path, "method": request.method,
+                                  "body": body.decode()})
         resp.headers.add("Set-Cookie", "a=1")
         resp.headers.add("Set-Cookie", "b=2")
         return resp
@@ -41,8 +47,13 @@ async def _start_upstream(port: int, seen: list) -> web.AppRunner:
                 await sock.send_str("echo:" + msg.data)
         return sock
 
+    async def slow(request: web.Request) -> web.Response:
+        await asyncio.sleep(3)
+        return web.Response(text="late")
+
     app = web.Application()
     app.router.add_get("/API/ws", ws)
+    app.router.add_get("/slow", slow)
     app.router.add_route("*", "/{tail:.*}", echo)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -99,7 +110,7 @@ def test_proxies_with_token_and_strips_credentials_and_forwarding_headers():
             async with c.post(h.base + "/API/Thing?x=1", data=body_stream(), headers=headers) as r:
                 assert r.status == 200
                 data = await r.json()
-                assert data == {"path": "/API/Thing?x=1", "method": "POST", "body": "hello"}
+                assert data == {"path": "/API/Thing?x=1", "raw": "/API/Thing?x=1", "method": "POST", "body": "hello"}
                 assert r.headers.getall("Set-Cookie") == ["a=1", "b=2"]
             upstream_headers = {k.lower(): v for k, v in h.seen[0].items()}
             assert "authorization" not in upstream_headers
@@ -230,4 +241,61 @@ def test_no_compression_unless_the_client_asks():
             async with c.get(h.base + "/x", headers={"Authorization": f"Bearer {TOKEN}", "Accept-Encoding": "gzip"}) as r:
                 assert r.status == 200
             assert h.seen[-1].get("Accept-Encoding") == "gzip"
+    run(body())
+
+
+def test_encoded_paths_reach_upstream_unchanged():
+    async def body():
+        async with Harness() as h, aiohttp.ClientSession() as c:
+            url = h.base + "/View/a%3Fb%23c%25d.png?x=1"
+            async with c.get(yarl_url(url), headers={"Authorization": f"Bearer {TOKEN}"}) as r:
+                assert (await r.json())["raw"] == "/View/a%3Fb%23c%25d.png?x=1"
+    run(body())
+
+
+def test_login_token_is_never_forwarded_upstream():
+    async def body():
+        async with Harness() as h, aiohttp.ClientSession() as c:
+            async with c.get(h.base + f"/x?worker_token={TOKEN}&y=2", headers={"Authorization": f"Bearer {TOKEN}"}) as r:
+                data = await r.json()
+                assert TOKEN not in data["raw"] and data["raw"] == "/x?y=2"
+    run(body())
+
+
+def test_rotating_token_cancels_in_flight_requests():
+    async def body():
+        async with Harness() as h, aiohttp.ClientSession() as c:
+            async def slow():
+                async with c.get(h.base + "/slow", headers={"Authorization": f"Bearer {TOKEN}"}) as r:
+                    return await r.read()
+            pending = asyncio.create_task(slow())
+            await asyncio.sleep(0.3)
+            await h.gateway.set_token(None)
+            try:
+                result = await asyncio.wait_for(pending, 2)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as ex:
+                result = ex
+            # Cut off before the upstream answers (the client may retry and then get a 401).
+            assert not isinstance(result, asyncio.TimeoutError) and result != b"late"
+    run(body())
+
+
+def test_token_rotation_during_websocket_handshake_closes_it():
+    async def body():
+        async with Harness() as h, aiohttp.ClientSession() as c:
+            original = web.WebSocketResponse.prepare
+
+            async def rotating_prepare(self, request):
+                result = await original(self, request)
+                await h.gateway.set_token(None)
+                return result
+            web.WebSocketResponse.prepare = rotating_prepare
+            try:
+                async with c.ws_connect(h.base + "/API/ws", headers={"Authorization": f"Bearer {TOKEN}"}) as ws:
+                    msg = await asyncio.wait_for(ws.receive(), 5)
+                    assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING)
+            finally:
+                web.WebSocketResponse.prepare = original
+            await asyncio.sleep(0.2)
+            assert not h.gateway._sockets
     run(body())

@@ -13,6 +13,8 @@ from typing import Callable, Mapping, Optional
 REASON_IDLE = "idle"
 REASON_NEVER_USED = "startup_grace_expired"
 REASON_MAX_LIFETIME = "max_lifetime"
+REASON_UNRESPONSIVE = "swarmui_unresponsive"
+REASON_EXITED = "swarmui_exited"
 
 
 def is_busy(global_status: Mapping[str, object]) -> bool:
@@ -40,19 +42,14 @@ class IdleMonitor:
     """
 
     def __init__(self, idle_seconds: float, startup_grace_seconds: float, max_seconds: float,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Optional[Callable[[], float]] = None):
         self._idle_seconds = idle_seconds
         self._grace_seconds = startup_grace_seconds
         self._max_seconds = max_seconds
-        self._clock = clock
-        self._started_at = clock()
+        self._clock = clock or time.monotonic
+        self._started_at = self._clock()
         self._last_activity: Optional[float] = None
         self._busy = False
-
-    @property
-    def seen_activity(self) -> bool:
-        """True once any generation activity has been observed during this lease."""
-        return self._last_activity is not None
 
     def observe(self, busy: bool) -> None:
         """Records one activity sample."""

@@ -1,5 +1,7 @@
 # Provider research (Phase 0), 2026-09-27
 
+A dated research snapshot that led to the lease design. The READMEs are the current reference; details here may be out of date.
+
 Sources were read directly: the official docs, plus the SDK source from pip wheels `runpod==1.12.0` and `vastai==1.8.2`.
 
 ## RunPod

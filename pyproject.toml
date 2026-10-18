@@ -1,10 +1,10 @@
 [project]
 name = "swarmui-worker"
-version = "0.1.0"
+version = "1.0.0"
 description = "Provider-neutral supervisor for SwarmUI cloud workers, by Hartsy."
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = ["aiohttp>=3.10,<4"]
+dependencies = ["aiohttp>=3.10,<4", "yarl>=1.10"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
