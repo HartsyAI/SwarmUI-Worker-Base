@@ -108,7 +108,7 @@ Baking models into an image (for providers with no volume, such as Vast.ai Serve
 ## Development
 
 ```bash
-pip install "aiohttp>=3.10,<4" "pytest>=8"
+pip install "aiohttp>=3.10,<4" "yarl>=1.10" "pytest>=8"
 python -m pytest
 bash tests/smoke/smoke.sh <image> <backend>   # CPU smoke test against a built image
 ```

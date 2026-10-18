@@ -30,6 +30,7 @@ async def _run(config: WorkerConfig) -> int:
     await asyncio.wait({starting, stopped}, return_when=asyncio.FIRST_COMPLETED)
     if not starting.done():
         starting.cancel()
+        await asyncio.gather(starting, return_exceptions=True)
         await supervisor.stop()
         return 0
     if starting.exception() is not None:

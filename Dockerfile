@@ -72,7 +72,7 @@ COPY --from=swarm-build --chown=swarm:swarm /opt/swarmui /opt/swarmui
 # The worker supervisor: its own venv, never shared with ComfyUI's.
 COPY --chown=swarm:swarm src/swarmui_worker /opt/worker/lib/swarmui_worker
 RUN python3 -m venv /opt/worker/venv \
- && /opt/worker/venv/bin/pip install --no-cache-dir "aiohttp>=3.10,<4" \
+ && /opt/worker/venv/bin/pip install --no-cache-dir "aiohttp>=3.10,<4" "yarl>=1.10" \
  && chown -R swarm:swarm /opt/worker
 
 COPY --chown=swarm:swarm docker/install_comfyui.sh docker/backends.py docker/prewarm.py /build/
