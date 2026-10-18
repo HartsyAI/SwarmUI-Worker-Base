@@ -18,12 +18,17 @@ class FakeProcess:
 
 
 class FakeApi:
-    def __init__(self, responses):
+    def __init__(self, responses, interrupt=None):
         self.responses = list(responses)
         self.calls: list[str] = []
+        self.interrupt = interrupt or {"success": True}
 
     async def call(self, route, body=None):
         self.calls.append(route)
+        if route == "InterruptAll":
+            if isinstance(self.interrupt, Exception):
+                raise self.interrupt
+            return self.interrupt
         if route != "GetGlobalStatus":
             return {"success": True}
         item = self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
@@ -120,3 +125,17 @@ def test_shadow_root_may_not_overlap_models(tmp_path):
     with pytest.raises(ValueError):
         build_shadow_tree(str(models), str(models / "Lora"))
     assert (models / "Lora").is_dir()
+
+
+@pytest.mark.parametrize("interrupt", [RuntimeError("connection refused"), {"error": "boom", "error_id": "x"}])
+def test_unconfirmed_interrupt_retires_the_worker(tmp_path, interrupt):
+    sup = make_supervisor(tmp_path, FakeApi([IDLE], interrupt=interrupt))
+
+    async def body():
+        await sup.begin_lease()
+        await sup.end_lease()
+        assert sup.retired and sup.gateway._token is None
+        with pytest.raises(RuntimeError, match="retired"):
+            await sup.begin_lease()
+        await asyncio.wait_for(sup.watch_process(), 2)
+    asyncio.run(body())

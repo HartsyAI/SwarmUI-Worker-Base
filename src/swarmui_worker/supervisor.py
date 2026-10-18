@@ -55,6 +55,7 @@ class Supervisor:
         self._lease_number = 0
         self._lease_active = False
         self._stopping = False
+        self._retired = False
 
     async def start(self) -> None:
         """Prepares models and settings, then starts the gateway and SwarmUI, and waits for SwarmUI."""
@@ -74,6 +75,8 @@ class Supervisor:
 
     async def begin_lease(self) -> LeaseInfo:
         """Opens a lease and returns its token."""
+        if self._retired:
+            raise RuntimeError("This worker is retired: a previous lease's generations could not be confirmed stopped")
         if self._lease_active:
             raise RuntimeError("A lease is already active on this worker")
         token = self.config.token or generate_token()
@@ -143,9 +146,13 @@ class Supervisor:
             await self.gateway.set_token(None)
         try:
             # Stop anything still generating, or a late image could land after the wipe for the next holder.
-            await self.api.call("InterruptAll", {"other_sessions": True})
+            result = await self.api.call("InterruptAll", {"other_sessions": True})
+            if "error" in result:
+                raise RuntimeError(result.get("error"))
         except Exception as ex:
-            log.warning("Could not interrupt generations at lease end: %s", ex)
+            # Unconfirmed: never hand this worker to anyone else. The provider replaces it.
+            log.error("Could not interrupt generations at lease end (%s); retiring this worker", ex)
+            self._retired = True
         await asyncio.to_thread(self._wipe_outputs)
         self._lease_active = False
         log.info("Lease %d ended", self._lease_number)
@@ -165,11 +172,16 @@ class Supervisor:
                     except OSError:
                         pass
 
+    @property
+    def retired(self) -> bool:
+        """True once a lease ended without its generations confirmed stopped; the worker takes no more leases."""
+        return self._retired
+
     async def watch_process(self) -> None:
-        """Returns once SwarmUI exits on its own (not through `stop()`). Call only after `start()` has finished."""
-        while self.process.running or self._stopping:
+        """Returns once SwarmUI exits on its own (not through `stop()`) or the worker is retired. Call only after `start()` has finished."""
+        while (self.process.running or self._stopping) and not self._retired:
             await asyncio.sleep(5)
-        log.error("SwarmUI exited unexpectedly")
+        log.error("SwarmUI exited unexpectedly" if not self._retired else "Worker retired")
 
     async def stop(self) -> None:
         """Stops the gateway and SwarmUI."""
@@ -202,7 +214,7 @@ class BackgroundSupervisor:
     def start(self) -> None:
         """Blocking start (for use before a provider SDK takes over the main thread).
 
-        If SwarmUI later dies, the whole process exits non-zero so the provider replaces the worker.
+        If SwarmUI later dies, or the worker is retired, the whole process exits non-zero so the provider replaces it.
         """
         self._submit(self._supervisor.start()).result()
         self._submit(self._exit_when_swarm_dies())
@@ -223,6 +235,10 @@ class BackgroundSupervisor:
 
     async def end_lease(self) -> None:
         await self._await(self._supervisor.end_lease())
+        if self._supervisor.retired:
+            # Exit right away rather than at the next watch tick, so no new lease can land in between.
+            log.error("Exiting so the provider replaces this retired worker")
+            os._exit(1)
 
     def stop(self) -> None:
         """Blocking stop."""
