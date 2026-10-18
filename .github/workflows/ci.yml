@@ -51,6 +51,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      - name: Version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
       - name: Build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -59,7 +63,7 @@ jobs:
           tags: ${{ env.LOCAL_TAG }}
           build-args: |
             BACKEND=${{ matrix.backend }}
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ steps.version.outputs.version }}
             REVISION=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.backend }}
           cache-to: type=gha,mode=min,scope=${{ matrix.backend }}
@@ -108,16 +112,13 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Pushes the exact image the smoke test and scan just passed, rather than rebuilding it.
       - name: Push
         if: env.CAN_PUSH == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            BACKEND=${{ matrix.backend }}
-            VERSION=${{ github.ref_name }}
-            REVISION=${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.backend }}
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          for tag in $TAGS; do
+            docker tag "$LOCAL_TAG" "$tag"
+            docker push "$tag"
+          done

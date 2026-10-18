@@ -9,7 +9,7 @@ reaches SwarmUI unless it carries the current worker token:
 - An HttpOnly cookie, set only by the optional one-time `?worker_token=` browser login.
 
 With no token set (between leases), every request is refused. Rotating the token closes every open
-WebSocket, so whoever held the previous lease is cut off at once.
+connection, so whoever held the previous lease is cut off at once.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from urllib.parse import urlencode
 import aiohttp
 from aiohttp import web
 from multidict import CIMultiDict
+from yarl import URL
 
 from . import logs
 
@@ -86,32 +87,31 @@ class Gateway:
         self._token: Optional[str] = None
         self._upstream_ready = False
         self._sockets: set[web.WebSocketResponse] = set()
+        self._requests: set[asyncio.Task] = set()
         self._client: Optional[aiohttp.ClientSession] = None
         self._runner: Optional[web.AppRunner] = None
 
     # ── Token lifecycle ─────────────────────────────────────────────────────
 
-    @property
-    def has_token(self) -> bool:
-        """True while a lease (or a fixed token) is active."""
-        return self._token is not None
-
     async def set_token(self, token: Optional[str]) -> None:
-        """Replaces the accepted token (None refuses everything) and drops every open WebSocket."""
+        """Replaces the accepted token (None refuses everything) and drops every open connection."""
         old = self._token
         self._token = token
         if token:
             logs.register_secret(token)
         if old and old != token:
-            await self.close_sockets()
+            await self.close_connections()
             logs.forget_secret(old)
 
     def set_upstream_ready(self, ready: bool) -> None:
         """Until SwarmUI answers, authenticated requests get a clean 503 instead of a connect error."""
         self._upstream_ready = ready
 
-    async def close_sockets(self) -> None:
-        """Closes every proxied WebSocket, e.g. when a lease ends."""
+    async def close_connections(self) -> None:
+        """Closes every proxied WebSocket and cancels every in-flight HTTP request, e.g. when a lease ends."""
+        for task in list(self._requests):
+            task.cancel()
+        self._requests.clear()
         for ws in list(self._sockets):
             await ws.close(code=aiohttp.WSCloseCode.GOING_AWAY, message=b"lease ended")
         self._sockets.clear()
@@ -140,7 +140,7 @@ class Gateway:
 
     async def stop(self) -> None:
         """Stops listening and closes every connection."""
-        await self.close_sockets()
+        await self.close_connections()
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
@@ -181,7 +181,19 @@ class Gateway:
                                      status=503, headers={"Retry-After": "5"})
         if request.headers.get("Upgrade", "").lower() == "websocket":
             return await self._proxy_websocket(request)
-        return await self._proxy_http(request)
+        task = asyncio.current_task()
+        self._requests.add(task)
+        try:
+            return await self._proxy_http(request)
+        finally:
+            self._requests.discard(task)
+
+    def _upstream_url(self, request: web.Request, scheme: str = "http") -> URL:
+        """The upstream URL, still percent-encoded (so `?`, `#` and `%` in names survive), minus any login token."""
+        rel = request.rel_url
+        if URL_LOGIN_PARAM in rel.query:
+            rel = rel.without_query_params(URL_LOGIN_PARAM)
+        return URL(self._upstream.replace("http", scheme, 1) + rel.raw_path_qs, encoded=True)
 
     def _url_login(self, request: web.Request) -> web.StreamResponse:
         if not _tokens_match(request.query.get(URL_LOGIN_PARAM), self._token):
@@ -195,7 +207,7 @@ class Gateway:
 
     async def _proxy_http(self, request: web.Request) -> web.StreamResponse:
         assert self._client is not None
-        url = self._upstream + request.rel_url.path_qs
+        url = self._upstream_url(request)
         headers = _without_worker_cookie(_forward_headers(request.headers, _STRIPPED_REQUEST))
         # Buffered, not streamed: SwarmUI's API rejects requests without an exact Content-Length, which a
         # chunked upload would not carry. API bodies are JSON; responses still stream.
@@ -222,12 +234,16 @@ class Gateway:
     async def _proxy_websocket(self, request: web.Request) -> web.StreamResponse:
         assert self._client is not None
         client_ws = web.WebSocketResponse(max_msg_size=0, autoping=True)
-        await client_ws.prepare(request)
+        token = self._token
+        # Tracked before the handshake, so a token rotation during it still closes this socket.
         self._sockets.add(client_ws)
-        url = self._upstream.replace("http://", "ws://") + request.rel_url.path_qs
-        headers = _without_worker_cookie(_forward_headers(request.headers, _STRIPPED_REQUEST | {
-            "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions"}))
         try:
+            await client_ws.prepare(request)
+            if self._token != token:
+                return client_ws
+            url = self._upstream_url(request, "ws")
+            headers = _without_worker_cookie(_forward_headers(request.headers, _STRIPPED_REQUEST | {
+                "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions"}))
             async with self._client.ws_connect(url, headers=headers, max_msg_size=0, autoping=True) as upstream_ws:
                 async def pump(source, sink) -> None:
                     async for msg in source:
@@ -246,6 +262,6 @@ class Gateway:
             log.warning("Upstream WebSocket failed for %s: %s", request.path, ex)
         finally:
             self._sockets.discard(client_ws)
-            if not client_ws.closed:
+            if client_ws.prepared and not client_ws.closed:
                 await client_ws.close()
         return client_ws

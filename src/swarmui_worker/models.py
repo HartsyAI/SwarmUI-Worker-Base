@@ -27,6 +27,10 @@ def build_shadow_tree(source_root: str, shadow_root: str) -> int:
     source_root = os.path.realpath(source_root)
     if not os.path.isdir(source_root):
         raise FileNotFoundError(f"Model root '{source_root}' does not exist or is not a directory")
+    real_shadow = os.path.realpath(shadow_root)
+    if os.path.commonpath([real_shadow, source_root]) in (real_shadow, source_root):
+        # Rebuilding wipes the shadow root, so it must never be, or contain, the shared models.
+        raise ValueError(f"Shadow root '{shadow_root}' overlaps the model root '{source_root}'")
     if os.path.lexists(shadow_root):
         shutil.rmtree(shadow_root)
     os.makedirs(shadow_root)

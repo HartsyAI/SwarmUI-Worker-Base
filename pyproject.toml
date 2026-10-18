@@ -1,6 +1,6 @@
 [project]
 name = "swarmui-worker"
-version = "0.1.0"
+version = "1.0.0"
 description = "Provider-neutral supervisor for SwarmUI cloud workers, by Hartsy."
 license = "MIT"
 requires-python = ">=3.10"

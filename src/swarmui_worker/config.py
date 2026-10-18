@@ -80,8 +80,6 @@ class WorkerConfig:
     are never written onto storage shared with other workers."""
     shadow_root: str
     """Where the private model tree is built."""
-    output_dir: str
-    """SwarmUI output folder, wiped between leases."""
     idle_seconds: float
     """How long the worker may sit with no generation activity before it is released."""
     startup_grace_seconds: float
@@ -137,7 +135,6 @@ class WorkerConfig:
             model_root=env.get("SWARMUI_MODEL_ROOT", "").strip(),
             shadow_models=_get_bool(env, "SWARMUI_SHADOW_MODELS", True),
             shadow_root=env.get("SWARMUI_SHADOW_ROOT", "/tmp/swarmui-models"),
-            output_dir=env.get("SWARMUI_OUTPUT_DIR", os.path.join(swarm_dir, "Output")),
             idle_seconds=_get_float(env, "SWARMUI_IDLE_SECONDS", 120.0, 5.0),
             startup_grace_seconds=_get_float(env, "SWARMUI_STARTUP_GRACE_SECONDS", 600.0, 5.0),
             max_seconds=_get_float(env, "SWARMUI_MAX_LEASE_SECONDS", 3600.0, 0.0),

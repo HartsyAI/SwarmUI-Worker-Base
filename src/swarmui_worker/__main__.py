@@ -24,27 +24,26 @@ async def _run(config: WorkerConfig) -> int:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
-    try:
-        await supervisor.start()
-    except Exception:
-        log.exception("Worker failed to start")
+    starting = asyncio.create_task(supervisor.start())
+    stopped = asyncio.create_task(stop.wait())
+    # Race startup against SIGTERM, so a stop during a long boot is not ignored.
+    await asyncio.wait({starting, stopped}, return_when=asyncio.FIRST_COMPLETED)
+    if not starting.done():
+        starting.cancel()
+        await supervisor.stop()
+        return 0
+    if starting.exception() is not None:
+        log.error("Worker failed to start", exc_info=starting.exception())
         await supervisor.stop()
         return 1
     log.info("Standalone worker running; send SIGTERM to stop")
-    watcher = asyncio.create_task(_watch_process(supervisor, stop))
-    await stop.wait()
-    crashed = not supervisor.process.running
-    watcher.cancel()
+    crashed = asyncio.create_task(supervisor.watch_process())
+    await asyncio.wait({stopped, crashed}, return_when=asyncio.FIRST_COMPLETED)
+    exited = crashed.done()
+    crashed.cancel()
     await supervisor.stop()
     # A non-zero exit lets the provider's restart policy (or the extension) see the crash.
-    return 1 if crashed else 0
-
-
-async def _watch_process(supervisor: Supervisor, stop: asyncio.Event) -> None:
-    while supervisor.process.running:
-        await asyncio.sleep(5)
-    log.error("SwarmUI exited unexpectedly; stopping the worker")
-    stop.set()
+    return 1 if exited else 0
 
 
 def main() -> int:

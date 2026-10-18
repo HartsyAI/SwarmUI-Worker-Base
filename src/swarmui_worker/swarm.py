@@ -13,6 +13,10 @@ import aiohttp
 log = logging.getLogger("swarmui_worker.swarm")
 swarm_log = logging.getLogger("swarmui")
 
+# Credentials in the worker's environment that are kept from SwarmUI and everything it starts.
+_PRIVATE_ENV = {"SWARMUI_WORKER_TOKEN", "RUNPOD_API_KEY", "RUNPOD_AI_API_KEY", "CONTAINER_API_KEY",
+                "JUPYTER_PASSWORD"}
+
 
 class SwarmStartError(RuntimeError):
     """SwarmUI failed to start or never answered."""
@@ -99,7 +103,8 @@ class SwarmProcess:
             raise SwarmStartError(f"SwarmUI binary not found at {binary}")
         # Loopback only: the gateway is the sole public entry point.
         args = [binary, "--launch_mode", "none", "--host", "127.0.0.1", "--port", str(self._port), *self._extra_args]
-        env = dict(os.environ)
+        # SwarmUI, ComfyUI and custom nodes never need the worker's credentials.
+        env = {k: v for k, v in os.environ.items() if k not in _PRIVATE_ENV}
         env.setdefault("HOME", os.path.join(self._swarm_dir, "home"))
         self._proc = await asyncio.create_subprocess_exec(
             *args, cwd=self._swarm_dir, env=env,
@@ -139,8 +144,8 @@ class SwarmProcess:
             await asyncio.sleep(2)
         raise SwarmStartError(f"SwarmUI did not answer within {timeout:.0f}s")
 
-    async def stop(self, grace: float = 20) -> None:
-        """SIGTERM, then SIGKILL after `grace` seconds."""
+    async def stop(self, grace: float = 8) -> None:
+        """SIGTERM, then SIGKILL after `grace` seconds (under Docker's default 10s stop timeout)."""
         if self._proc is None or self._proc.returncode is not None:
             return
         self._proc.terminate()
