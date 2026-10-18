@@ -35,6 +35,10 @@ case "$BACKEND" in
         dotnet build "$(ls "$ext"/*.csproj)" -c Release -o "/opt/swarmui/src/bin/extensions/$dll/" \
             "-p:BaseIntermediateOutputPath=/opt/swarmui/src/obj/extensions/$dll/;TargetName=$dll-$hash"
         test -f "/opt/swarmui/src/bin/extensions/$dll/$dll-$hash.dll"
+        # The engine floats to the newest published version; record which one this image got.
+        engine="$(grep -o '"HartsyInference/[^"]*"' "/opt/swarmui/src/obj/extensions/$dll/project.assets.json" | head -1 | cut -d/ -f2 | tr -d '"' || true)"
+        echo "${engine:-unknown}" > /opt/swarmui/src/bin/hartsyinference-engine-version
+        echo "HartsyInference extension $(git -C "$ext" rev-parse --short HEAD), engine ${engine:-unknown} (CI resolved ${HARTSYINFERENCE_ENGINE:-latest})"
         ;;
     *)
         echo "Unknown BACKEND '$BACKEND' (expected comfyui or hartsyinference)" >&2
