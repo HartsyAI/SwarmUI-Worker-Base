@@ -6,8 +6,6 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
-  # Rebuild by hand to pick up a newly published HartsyInference engine without a code change.
-  workflow_dispatch:
 
 permissions:
   contents: read

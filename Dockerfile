@@ -19,7 +19,8 @@ ARG SWARMUI_REPO=https://github.com/mcmonkeyprojects/SwarmUI
 ARG SWARMUI_REF
 ARG HARTSYINFERENCE_REPO=https://github.com/HartsyAI/SwarmUI-HartsyInference-Backend
 # The HartsyInference extension tracks its main branch, which uses the newest published engine. CI passes the resolved
-# commit and engine version, so the build cache never serves an older engine.
+# commit and engine version, so the build cache never serves an older engine. A local rebuild with the defaults can reuse
+# a cached build; pass both build args, or --no-cache-filter swarm-build, to get the newest.
 ARG HARTSYINFERENCE_REF=main
 ARG HARTSYINFERENCE_ENGINE=latest
 

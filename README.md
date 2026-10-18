@@ -74,6 +74,8 @@ docker build --build-arg BACKEND=comfyui -t swarmui-worker-base:local-comfyui .
 docker build --build-arg BACKEND=hartsyinference -t swarmui-worker-base:local-hartsyinference .
 ```
 
+A repeat `hartsyinference` build can reuse Docker's cached SwarmUI stage, and with it an older engine. To get the newest, pass `--no-cache-filter swarm-build`, or pin both `--build-arg HARTSYINFERENCE_REF=<commit>` and `--build-arg HARTSYINFERENCE_ENGINE=<version>` (CI does the latter).
+
 | Build argument | Default | Meaning |
 |---|---|---|
 | `BACKEND` | `comfyui` | `comfyui` or `hartsyinference`. |
