@@ -9,7 +9,7 @@
 # Provider images (RunPod, Vast.ai) build FROM this one and add only their provider adapter.
 
 ARG CUDA_IMAGE=nvidia/cuda:12.8.1-runtime-ubuntu24.04
-ARG SWARMUI_REF=b5d28088f20b0703155d9bb57fa41a39bb62c8fe
+ARG SWARMUI_REF=66ac87fcc41b5163d6b372658bdf85374a4c8158
 
 # ── Stage 1: build SwarmUI (and the HartsyInference extension) with the .NET SDK ──────────────────
 FROM mcr.microsoft.com/dotnet/sdk:8.0-noble AS swarm-build
