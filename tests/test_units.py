@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
+import traceback
 
 import pytest
 
@@ -12,6 +15,9 @@ from swarmui_worker.config import ConfigError, WorkerConfig
 from swarmui_worker.idle import (REASON_IDLE, REASON_MAX_LIFETIME, REASON_NEVER_USED, IdleMonitor,
                                  is_busy)
 from swarmui_worker.models import build_shadow_tree
+from swarmui_worker.startup import TRANSPORT_KEY, StartupConfig
+from swarmui_worker.startup import main as startup_main
+from swarmui_worker.swarm import child_env
 
 
 class Clock:
@@ -85,22 +91,115 @@ def test_config_defaults():
 
 
 @pytest.mark.parametrize("env,fragment", [
-    ({"SWARMUI_WORKER_TOKEN": "short"}, "at least 32"),
     ({"SWARMUI_INTERNAL_PORT": "7801"}, "must differ"),
     ({"SWARMUI_IDLE_SECONDS": "abc"}, "must be a number"),
     ({"SWARMUI_IDLE_SECONDS": "1"}, "at least"),
     ({"SWARMUI_SHADOW_MODELS": "maybe"}, "true or false"),
-    ({"SWARMUI_PUBLIC_PORT": "70000"}, "between"),
 ])
 def test_config_rejects_bad_values(env, fragment):
     with pytest.raises(ConfigError, match=fragment):
         WorkerConfig.from_env(env)
 
 
-def test_config_error_never_echoes_the_token():
+def test_config_takes_the_token_and_port_from_the_startup_config():
+    token = "t" * 40
+    raw = encode({"worker_token": token, "public_port": 7900})
+    try:
+        c = WorkerConfig.from_env({TRANSPORT_KEY: raw})
+        assert c.token == token and c.public_port == 7900
+        # Neither the token nor the encoded value that holds it may reach a log line.
+        assert logs.redact(f"{raw} {token}") == f"{logs.REDACTED} {logs.REDACTED}"
+    finally:
+        logs.forget_secret(token)
+        logs.forget_secret(raw)
+    with pytest.raises(ConfigError, match="must differ"):
+        WorkerConfig.from_env({TRANSPORT_KEY: encode({"public_port": 7810})})
+
+
+# ── StartupConfig ────────────────────────────────────────────────────────────
+
+def encode(data) -> str:
+    """The way the Cloud Backends extension sends a config: unpadded base64url JSON."""
+    text = data if isinstance(data, str) else json.dumps(data)
+    return base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def test_startup_config_defaults_when_absent_or_blank():
+    assert StartupConfig.from_env({}) == StartupConfig()
+    assert StartupConfig.from_env({TRANSPORT_KEY: "  "}) == StartupConfig()
+    assert StartupConfig.parse("{}") == StartupConfig(worker_token=None, public_port=7801, volume_path=None)
+
+
+@pytest.mark.parametrize("length", range(32, 36))
+def test_startup_config_reads_plain_and_base64url_json(length):
+    # Four token lengths cover every base64 padding case.
+    data = {"worker_token": "a" * length, "public_port": 7802, "volume_path": "/workspace"}
+    expected = StartupConfig(worker_token="a" * length, public_port=7802, volume_path="/workspace")
+    assert StartupConfig.parse(json.dumps(data)) == expected
+    assert StartupConfig.parse(encode(data)) == expected
+
+
+def test_startup_config_reads_what_the_extension_sends():
+    # Produced by CloudWorkerConfig.Encode() in SwarmUI-CloudBackends, whose tests pin the same value.
+    sent = ("eyJ3b3JrZXJfdG9rZW4iOiJhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NSIsInB1YmxpY19wb3J0Ijo3ODAyLCJ2b2x1bWVfcGF0aCI6Ii93b3Jrc3BhY2UifQ")
+    assert StartupConfig.parse(sent) == StartupConfig("abcdefghijklmnopqrstuvwxyz012345", 7802, "/workspace")
+
+
+def test_startup_config_reads_blank_and_null_fields_as_unset():
+    assert StartupConfig.parse('{"worker_token": " ", "public_port": null, "volume_path": ""}') == StartupConfig()
+
+
+@pytest.mark.parametrize("raw,fragment", [
+    ("not base64!", "JSON object"),
+    ("__4", "JSON object"),  # base64url of bytes that are not UTF-8
+    (encode("nope"), "not valid JSON"),
+    ("{oops", "not valid JSON"),
+    (encode("[]"), "must be a JSON object"),
+    ('{"worker_token": "short"}', "at least 32"),
+    ('{"worker_token": 12345678901234567890123456789012345}', "must be a string"),
+    ('{"public_port": "7801"}', "must be an integer"),
+    ('{"public_port": true}', "must be an integer"),
+    ('{"public_port": 7801.0}', "must be an integer"),
+    ('{"public_port": 0}', "between"),
+    ('{"public_port": 70000}', "between"),
+    ('{"volume_path": "workspace"}', "absolute path"),
+    ('{"volume_path": "/a\\n/b"}', "absolute path"),
+    ('{"worker_tokn": "x"}', "unknown field"),
+    ('{"public_port": 1, "public_port": 2}', "duplicate field"),
+])
+def test_startup_config_rejects_bad_values(raw, fragment):
+    with pytest.raises(ConfigError, match=fragment):
+        StartupConfig.parse(raw)
+
+
+@pytest.mark.parametrize("raw", ['{"worker_token": "sekrit"}', '{"sekrit": 1}', '{"worker_token": "sekrit', "sekrit!", encode("sekrit")])
+def test_config_error_never_echoes_the_value(raw):
     with pytest.raises(ConfigError) as info:
-        WorkerConfig.from_env({"SWARMUI_WORKER_TOKEN": "sekrit"})
-    assert "sekrit" not in str(info.value)
+        WorkerConfig.from_env({TRANSPORT_KEY: raw})
+    shown = "".join(traceback.format_exception(info.value))
+    assert "sekrit" not in str(info.value) and raw not in str(info.value)
+    # The chained cause is suppressed too, so a logged traceback cannot show it either.
+    assert "JSONDecodeError" not in shown
+
+
+def test_entrypoint_command_prints_only_the_volume_path(monkeypatch, capsys):
+    monkeypatch.setenv(TRANSPORT_KEY, encode({"worker_token": "z" * 40, "volume_path": "/runpod-volume"}))
+    assert startup_main(["volume_path"]) == 0
+    assert capsys.readouterr().out == "/runpod-volume\n"
+    assert startup_main(["worker_token"]) == 2
+    assert "z" * 40 not in "".join(capsys.readouterr())
+    monkeypatch.delenv(TRANSPORT_KEY)
+    assert startup_main(["volume_path"]) == 0
+    assert capsys.readouterr().out == "\n"
+    monkeypatch.setenv(TRANSPORT_KEY, "{oops")
+    assert startup_main(["volume_path"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and "not valid JSON" in captured.err
+
+
+def test_swarmui_never_receives_the_worker_config():
+    env = child_env({TRANSPORT_KEY: "x", "RUNPOD_API_KEY": "y", "PATH": "/bin"})
+    assert env == {"PATH": "/bin"}
 
 
 # ── Redaction ────────────────────────────────────────────────────────────────

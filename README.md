@@ -36,7 +36,7 @@ Standalone mode is for a rented machine (a pod or an instance) that stays up unt
 
 ```bash
 docker run --gpus all -p 7801:7801 \
-  -e SWARMUI_WORKER_TOKEN="$(openssl rand -hex 32)" \
+  -e SWARMUI_WORKER_CONFIG="{\"worker_token\": \"$(openssl rand -hex 32)\"}" \
   -e SWARMUI_MODEL_ROOT=/workspace/models \
   -v /path/to/models:/workspace/models \
   kalebbroo/swarmui-worker-base:1.0.0-comfyui
@@ -48,16 +48,28 @@ Serverless providers do not use standalone mode. Their images drive leases throu
 
 ## Configuration
 
+### Worker config
+
+`SWARMUI_WORKER_CONFIG` is one JSON object, which a client such as [Cloud Backends](https://github.com/HartsyAI/SwarmUI-CloudBackends) sets when it creates the container. It can be plain JSON, or JSON encoded as base64url (safe where a provider turns the value into docker arguments). An unknown field, a duplicate field or a wrong type stops the worker at startup.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `worker_token` | *(none)* | String, at least 32 characters. A fixed token. Required in standalone mode. Serverless adapters leave it out, so each lease gets its own token. |
+| `public_port` | `7801` | Integer. The gateway port, and the only port to expose. |
+| `volume_path` | *(none)* | Absolute path where the provider mounted the volume with the models. Only provider images read it, to find the models; use `SWARMUI_MODEL_ROOT` in standalone mode. |
+
+The worker keeps this value out of its logs, and out of the environment of SwarmUI and everything SwarmUI starts.
+
+### Tunables
+
 | Variable | Default | Meaning |
 |---|---|---|
-| `SWARMUI_WORKER_TOKEN` | *(none)* | A fixed token, at least 32 characters. Required in standalone mode. Serverless adapters leave it unset, so each lease gets its own token. |
 | `SWARMUI_MODEL_ROOT` | the image's `Models` folder | Where the models are, e.g. a mounted volume. |
 | `SWARMUI_SHADOW_MODELS` | `true` | Read models through a private symlink tree (see above). |
 | `SWARMUI_SHADOW_ROOT` | `/tmp/swarmui-models` | Where that tree is built. It is wiped on start, so it must not overlap the model root. |
 | `SWARMUI_IDLE_SECONDS` | `120` | Release a lease after this long with no generation activity. |
 | `SWARMUI_STARTUP_GRACE_SECONDS` | `600` | How long a new lease may wait for its first generation. |
 | `SWARMUI_MAX_LEASE_SECONDS` | `3600` | Longest lease (0 means no limit). Never interrupts a running generation; set the provider's execution timeout above it. |
-| `SWARMUI_PUBLIC_PORT` | `7801` | The gateway port, and the only port to expose. |
 | `SWARMUI_PUBLIC_HOST` | `0.0.0.0` | Interface the gateway binds to. |
 | `SWARMUI_INTERNAL_PORT` | `7810` | SwarmUI's loopback port. |
 | `SWARMUI_TLS_CERT` / `SWARMUI_TLS_KEY` | *(none)* | PEM certificate and key, to serve the gateway over HTTPS (e.g. Vast.ai's `/etc/instance.crt`). Set both or neither. |
@@ -103,6 +115,8 @@ async def serve_one_lease():
     reason = await supervisor.wait_for_release()  # returns once idle / never used / capped
     await supervisor.end_lease()                # revoke token, drop connections, wipe outputs
 ```
+
+A shell entrypoint reads the volume path with `python -m swarmui_worker.startup volume_path`, which prints nothing when it is not set and fails on an invalid config.
 
 The supervisor runs on its own thread and event loop, so it keeps serving between the provider SDK's jobs, whatever event loop that SDK uses. Keep `/usr/bin/tini --` at the front of the provider image's `ENTRYPOINT`, so signals reach the worker and orphaned backend processes are reaped.
 

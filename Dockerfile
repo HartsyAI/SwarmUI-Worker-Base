@@ -102,6 +102,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15m --retries=3 \
   CMD curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{}' \
       "http://127.0.0.1:${SWARMUI_INTERNAL_PORT:-7810}/API/GetNewSession" || exit 1
 
-# Standalone mode (rented pods/instances; needs SWARMUI_WORKER_TOKEN). Provider images override this.
+# Standalone mode (rented pods/instances; needs SWARMUI_WORKER_CONFIG). Provider images override this.
 # tini is PID 1: it forwards signals and reaps orphaned backend processes.
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/worker/venv/bin/python", "-m", "swarmui_worker"]
