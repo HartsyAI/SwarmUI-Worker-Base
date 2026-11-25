@@ -60,7 +60,9 @@ print('backend ok:', types)
 " || fail "backend check failed: $backends"
 
 echo "Checking the token never reached the logs..."
-docker logs "$NAME" 2>&1 | grep -qF -e "$TOKEN" -e "$CONFIG" && fail "worker token appears in container logs"
+# Read in full first: with pipefail, grep -q stopping at a match would fail the pipe and hide the leak.
+logs="$(docker logs "$NAME" 2>&1)"
+grep -qF -e "$TOKEN" -e "$CONFIG" <<< "$logs" && fail "worker token appears in container logs"
 
 echo "Checking SwarmUI never received the token..."
 swarm_env="$(docker exec "$NAME" sh -c 'for e in /proc/[0-9]*/environ; do p="${e%/environ}"; case "$(readlink "$p/exe" 2>/dev/null)" in */SwarmUI) tr "\0" "\n" < "$e";; esac; done')"
