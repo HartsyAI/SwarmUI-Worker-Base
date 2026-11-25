@@ -14,7 +14,7 @@ import binascii
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
 TRANSPORT_KEY = "SWARMUI_WORKER_CONFIG"
@@ -38,7 +38,7 @@ class ConfigError(ValueError):
 class StartupConfig:
     """What the client chose for this worker. Every field is optional."""
 
-    worker_token: Optional[str] = None
+    worker_token: Optional[str] = field(default=None, repr=False)
     """Fixed gateway token, or None to generate one per lease."""
     public_port: int = DEFAULT_PUBLIC_PORT
     """Port the gateway listens on. This is the only port a provider should expose."""
@@ -49,9 +49,9 @@ class StartupConfig:
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "StartupConfig":
         """Reads the config from its provider field. An absent or blank field means all defaults."""
         env = os.environ if env is None else env
-        for old, field in _REPLACED.items():
+        for old, replacement in _REPLACED.items():
             if env.get(old, "").strip():
-                raise ConfigError(f"{old} is no longer read; set {field} in {TRANSPORT_KEY} instead")
+                raise ConfigError(f"{old} is no longer read; set {replacement} in {TRANSPORT_KEY} instead")
         raw = env.get(TRANSPORT_KEY, "").strip()
         return cls.parse(raw) if raw else cls()
 

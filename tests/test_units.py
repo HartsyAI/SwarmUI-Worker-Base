@@ -109,6 +109,7 @@ def test_config_takes_the_token_and_port_from_the_startup_config():
     try:
         c = WorkerConfig.from_env({TRANSPORT_KEY: raw})
         assert c.token == token and c.public_port == 7900
+        assert token not in repr(c) and token not in repr(StartupConfig.parse(raw))
         # Neither the token nor the encoded value that holds it may reach a log line.
         assert logs.redact(f"{raw} {token}") == f"{logs.REDACTED} {logs.REDACTED}"
     finally:

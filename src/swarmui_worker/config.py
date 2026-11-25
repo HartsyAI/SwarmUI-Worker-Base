@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping, Optional
 
 from . import logs
@@ -68,7 +68,7 @@ class WorkerConfig:
     """Interface the gateway binds to."""
     public_port: int
     """Port the gateway listens on. This is the only port a provider should expose."""
-    token: Optional[str]
+    token: Optional[str] = field(repr=False)
     """Fixed worker token from the startup config, or None to generate one per lease."""
     model_root: str
     """Where the models live (e.g. a network volume). Empty means the image's own Models folder."""
