@@ -13,6 +13,7 @@ import sys
 
 from . import logs
 from .config import ConfigError, WorkerConfig
+from .startup import TRANSPORT_KEY
 from .supervisor import Supervisor
 
 log = logging.getLogger("swarmui_worker")
@@ -58,7 +59,7 @@ def main() -> int:
     if not config.token:
         # A standalone worker has no provider channel to hand out a per-lease token, and running
         # without one would publish an unauthenticated admin SwarmUI.
-        log.error("SWARMUI_WORKER_TOKEN is required in standalone mode")
+        log.error("%s with a worker_token is required in standalone mode", TRANSPORT_KEY)
         return 2
     return asyncio.run(_run(config))
 

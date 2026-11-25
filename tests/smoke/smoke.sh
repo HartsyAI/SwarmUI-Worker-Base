@@ -7,6 +7,8 @@ IMAGE="$1"
 BACKEND="$2"
 PORT="${SMOKE_PORT:-17801}"
 TOKEN="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 48)"
+# base64url without padding, as the Cloud Backends extension sends it.
+CONFIG="$(printf '{"worker_token":"%s"}' "$TOKEN" | base64 -w0 | tr '+/' '-_' | tr -d '=')"
 NAME="swarmui-smoke-$$"
 BASE="http://127.0.0.1:${PORT}"
 
@@ -21,7 +23,7 @@ fail() {
     exit 1
 }
 
-docker run -d --name "$NAME" -p "127.0.0.1:${PORT}:7801" -e SWARMUI_WORKER_TOKEN="$TOKEN" "$IMAGE" > /dev/null
+docker run -d --name "$NAME" -p "127.0.0.1:${PORT}:7801" -e SWARMUI_WORKER_CONFIG="$CONFIG" "$IMAGE" > /dev/null
 
 echo "Waiting for SwarmUI behind the gateway..."
 for _ in $(seq 1 180); do
@@ -58,7 +60,12 @@ print('backend ok:', types)
 " || fail "backend check failed: $backends"
 
 echo "Checking the token never reached the logs..."
-docker logs "$NAME" 2>&1 | grep -q "$TOKEN" && fail "worker token appears in container logs"
+docker logs "$NAME" 2>&1 | grep -qF -e "$TOKEN" -e "$CONFIG" && fail "worker token appears in container logs"
+
+echo "Checking SwarmUI never received the token..."
+swarm_env="$(docker exec "$NAME" sh -c 'for e in /proc/[0-9]*/environ; do p="${e%/environ}"; case "$(readlink "$p/exe" 2>/dev/null)" in */SwarmUI) tr "\0" "\n" < "$e";; esac; done')"
+[ -n "$swarm_env" ] || fail "could not read SwarmUI's environment"
+grep -qF -e "SWARMUI_WORKER_CONFIG" -e "$TOKEN" -e "$CONFIG" <<< "$swarm_env" && fail "the worker config reached SwarmUI's environment"
 
 echo "Checking SwarmUI listens on loopback only..."
 docker exec "$NAME" sh -c "curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://\$(hostname -i | cut -d' ' -f1):7810/ || true" \

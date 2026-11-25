@@ -1,19 +1,16 @@
-"""Environment-driven configuration for the worker supervisor."""
+"""Configuration for the worker supervisor: the client's startup config plus the operator's tunables."""
 
 from __future__ import annotations
 
 import os
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping, Optional
 
-# Shorter tokens are refused: the gateway is the only thing between the public internet and a
-# SwarmUI that trusts every loopback caller as its admin.
-MIN_TOKEN_LENGTH = 32
+from . import logs
+from .startup import TRANSPORT_KEY, ConfigError, StartupConfig
 
-
-class ConfigError(ValueError):
-    """Raised when the worker environment is invalid. The message is safe to log."""
+__all__ = ["ConfigError", "WorkerConfig", "generate_token"]
 
 
 def _get_float(env: Mapping[str, str], name: str, default: float, minimum: float) -> float:
@@ -61,7 +58,7 @@ def generate_token() -> str:
 
 @dataclass(frozen=True)
 class WorkerConfig:
-    """Everything the supervisor needs, read once from the environment at startup."""
+    """Everything the supervisor needs, read once at startup."""
 
     swarm_dir: str
     """Root of the baked SwarmUI install (contains src/bin/live_release)."""
@@ -71,8 +68,8 @@ class WorkerConfig:
     """Interface the gateway binds to."""
     public_port: int
     """Port the gateway listens on. This is the only port a provider should expose."""
-    token: Optional[str]
-    """Fixed worker token from the environment, or None to generate one per lease."""
+    token: Optional[str] = field(repr=False)
+    """Fixed worker token from the startup config, or None to generate one per lease."""
     model_root: str
     """Where the models live (e.g. a network volume). Empty means the image's own Models folder."""
     shadow_models: bool
@@ -107,17 +104,14 @@ class WorkerConfig:
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "WorkerConfig":
         """Reads and validates the configuration. Raises ConfigError with a readable message."""
         env = os.environ if env is None else env
+        startup = StartupConfig.from_env(env)
+        if startup.worker_token is not None:
+            # The encoded value holds the token but does not contain its text, so it is redacted on its own.
+            logs.register_secret(startup.worker_token)
+            logs.register_secret(env[TRANSPORT_KEY].strip())
         swarm_port = _get_int(env, "SWARMUI_INTERNAL_PORT", 7810, 1, 65535)
-        public_port = _get_int(env, "SWARMUI_PUBLIC_PORT", 7801, 1, 65535)
-        if swarm_port == public_port:
-            raise ConfigError("SWARMUI_INTERNAL_PORT and SWARMUI_PUBLIC_PORT must differ")
-        token = env.get("SWARMUI_WORKER_TOKEN")
-        if token is not None:
-            token = token.strip()
-            if token == "":
-                token = None
-            elif len(token) < MIN_TOKEN_LENGTH:
-                raise ConfigError(f"SWARMUI_WORKER_TOKEN must be at least {MIN_TOKEN_LENGTH} characters")
+        if swarm_port == startup.public_port:
+            raise ConfigError(f"SWARMUI_INTERNAL_PORT and the {TRANSPORT_KEY} public_port must differ")
         swarm_dir = env.get("SWARMUI_DIR", "/opt/swarmui")
         tls_cert = env.get("SWARMUI_TLS_CERT", "").strip()
         tls_key = env.get("SWARMUI_TLS_KEY", "").strip()
@@ -130,8 +124,8 @@ class WorkerConfig:
             swarm_dir=swarm_dir,
             swarm_port=swarm_port,
             public_host=env.get("SWARMUI_PUBLIC_HOST", "0.0.0.0"),
-            public_port=public_port,
-            token=token,
+            public_port=startup.public_port,
+            token=startup.worker_token,
             model_root=env.get("SWARMUI_MODEL_ROOT", "").strip(),
             shadow_models=_get_bool(env, "SWARMUI_SHADOW_MODELS", True),
             shadow_root=env.get("SWARMUI_SHADOW_ROOT", "/tmp/swarmui-models"),

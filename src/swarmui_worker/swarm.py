@@ -6,20 +6,27 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import aiohttp
+
+from .startup import TRANSPORT_KEY
 
 log = logging.getLogger("swarmui_worker.swarm")
 swarm_log = logging.getLogger("swarmui")
 
 # Credentials in the worker's environment that are kept from SwarmUI and everything it starts.
-_PRIVATE_ENV = {"SWARMUI_WORKER_TOKEN", "RUNPOD_API_KEY", "RUNPOD_AI_API_KEY", "CONTAINER_API_KEY",
+_PRIVATE_ENV = {TRANSPORT_KEY, "RUNPOD_API_KEY", "RUNPOD_AI_API_KEY", "CONTAINER_API_KEY",
                 "JUPYTER_PASSWORD"}
 
 
 class SwarmStartError(RuntimeError):
     """SwarmUI failed to start or never answered."""
+
+
+def child_env(env: Mapping[str, str]) -> dict[str, str]:
+    """The environment SwarmUI runs with. SwarmUI, ComfyUI and custom nodes never need the worker's credentials."""
+    return {k: v for k, v in env.items() if k not in _PRIVATE_ENV}
 
 
 def write_settings(swarm_dir: str, model_root: str) -> None:
@@ -103,8 +110,7 @@ class SwarmProcess:
             raise SwarmStartError(f"SwarmUI binary not found at {binary}")
         # Loopback only: the gateway is the sole public entry point.
         args = [binary, "--launch_mode", "none", "--host", "127.0.0.1", "--port", str(self._port), *self._extra_args]
-        # SwarmUI, ComfyUI and custom nodes never need the worker's credentials.
-        env = {k: v for k, v in os.environ.items() if k not in _PRIVATE_ENV}
+        env = child_env(os.environ)
         env.setdefault("HOME", os.path.join(self._swarm_dir, "home"))
         self._proc = await asyncio.create_subprocess_exec(
             *args, cwd=self._swarm_dir, env=env,
