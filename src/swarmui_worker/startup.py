@@ -26,6 +26,9 @@ DEFAULT_PUBLIC_PORT = 7801
 # SwarmUI that trusts every loopback caller as its admin.
 MIN_TOKEN_LENGTH = 32
 
+# Variables this config replaced. Ignoring one would start the worker on the wrong port, or hand an old token to SwarmUI.
+_REPLACED = {"SWARMUI_WORKER_TOKEN": "worker_token", "SWARMUI_PUBLIC_PORT": "public_port"}
+
 
 class ConfigError(ValueError):
     """Raised when the worker's configuration is invalid. The message is safe to log."""
@@ -45,7 +48,11 @@ class StartupConfig:
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "StartupConfig":
         """Reads the config from its provider field. An absent or blank field means all defaults."""
-        raw = (os.environ if env is None else env).get(TRANSPORT_KEY, "").strip()
+        env = os.environ if env is None else env
+        for old, field in _REPLACED.items():
+            if env.get(old, "").strip():
+                raise ConfigError(f"{old} is no longer read; set {field} in {TRANSPORT_KEY} instead")
+        raw = env.get(TRANSPORT_KEY, "").strip()
         return cls.parse(raw) if raw else cls()
 
     @classmethod
@@ -58,6 +65,9 @@ class StartupConfig:
         token = _string(data, "worker_token")
         if token is not None and len(token) < MIN_TOKEN_LENGTH:
             raise ConfigError(f"{TRANSPORT_KEY} worker_token must be at least {MIN_TOKEN_LENGTH} characters")
+        # It travels in an Authorization header, so anything else could never be sent back.
+        if token is not None and not (token.isascii() and token.isprintable() and " " not in token):
+            raise ConfigError(f"{TRANSPORT_KEY} worker_token must be printable ASCII without spaces")
         port = data.get("public_port")
         if port is None:
             port = DEFAULT_PUBLIC_PORT
@@ -67,8 +77,8 @@ class StartupConfig:
         if port < 1 or port > 65535:
             raise ConfigError(f"{TRANSPORT_KEY} public_port must be between 1 and 65535")
         volume = _string(data, "volume_path")
-        if volume is not None and (not volume.startswith("/") or "\n" in volume):
-            raise ConfigError(f"{TRANSPORT_KEY} volume_path must be an absolute path")
+        if volume is not None and (not volume.startswith("/") or not volume.isprintable()):
+            raise ConfigError(f"{TRANSPORT_KEY} volume_path must be an absolute path without control characters")
         return cls(worker_token=token, public_port=port, volume_path=volume)
 
 

@@ -35,8 +35,10 @@ Always pin a release version in production.
 Standalone mode is for a rented machine (a pod or an instance) that stays up until you stop it. It requires a fixed token:
 
 ```bash
+TOKEN="$(openssl rand -hex 32)"
+echo "$TOKEN"
 docker run --gpus all -p 7801:7801 \
-  -e SWARMUI_WORKER_CONFIG="{\"worker_token\": \"$(openssl rand -hex 32)\"}" \
+  -e SWARMUI_WORKER_CONFIG="{\"worker_token\": \"$TOKEN\"}" \
   -e SWARMUI_MODEL_ROOT=/workspace/models \
   -v /path/to/models:/workspace/models \
   kalebbroo/swarmui-worker-base:1.0.0-comfyui
@@ -50,15 +52,15 @@ Serverless providers do not use standalone mode. Their images drive leases throu
 
 ### Worker config
 
-`SWARMUI_WORKER_CONFIG` is one JSON object, which a client such as [Cloud Backends](https://github.com/HartsyAI/SwarmUI-CloudBackends) sets when it creates the container. It can be plain JSON, or JSON encoded as base64url (safe where a provider turns the value into docker arguments). An unknown field, a duplicate field or a wrong type stops the worker at startup.
+`SWARMUI_WORKER_CONFIG` is one JSON object, which a client such as [Cloud Backends](https://github.com/HartsyAI/SwarmUI-CloudBackends) sets when it creates the container. It can be plain JSON, or JSON encoded as base64url (safe where a provider turns the value into docker arguments). An unknown field, a duplicate field or a wrong type stops the worker at startup, and so does `SWARMUI_WORKER_TOKEN` or `SWARMUI_PUBLIC_PORT`, which this replaced.
 
 | Field | Default | Meaning |
 |---|---|---|
-| `worker_token` | *(none)* | String, at least 32 characters. A fixed token. Required in standalone mode. Serverless adapters leave it out, so each lease gets its own token. |
+| `worker_token` | *(none)* | String, at least 32 characters, printable ASCII without spaces. A fixed token. Required in standalone mode. Serverless adapters leave it out, so each lease gets its own token. |
 | `public_port` | `7801` | Integer. The gateway port, and the only port to expose. |
 | `volume_path` | *(none)* | Absolute path where the provider mounted the volume with the models. Only provider images read it, to find the models; use `SWARMUI_MODEL_ROOT` in standalone mode. |
 
-The worker keeps this value out of its logs, and out of the environment of SwarmUI and everything SwarmUI starts.
+The worker keeps this value out of its logs, and out of the environment of SwarmUI and everything SwarmUI starts. SwarmUI runs as the same user as the worker, so code installed into it, such as a custom node, could still look the value up in `/proc`: install only what you trust.
 
 ### Tunables
 

@@ -63,10 +63,9 @@ echo "Checking the token never reached the logs..."
 docker logs "$NAME" 2>&1 | grep -qF -e "$TOKEN" -e "$CONFIG" && fail "worker token appears in container logs"
 
 echo "Checking SwarmUI never received the token..."
-docker exec "$NAME" sh -c 'for e in /proc/[0-9]*/environ; do p="${e%/environ}"; case "$(readlink "$p/exe" 2>/dev/null)" in */SwarmUI) tr "\0" "\n" < "$e";; esac; done' > smoke-env.txt
-[ -s smoke-env.txt ] || fail "could not read SwarmUI's environment"
-grep -q "SWARMUI_WORKER_CONFIG" smoke-env.txt && fail "the worker config reached SwarmUI's environment"
-rm -f smoke-env.txt
+swarm_env="$(docker exec "$NAME" sh -c 'for e in /proc/[0-9]*/environ; do p="${e%/environ}"; case "$(readlink "$p/exe" 2>/dev/null)" in */SwarmUI) tr "\0" "\n" < "$e";; esac; done')"
+[ -n "$swarm_env" ] || fail "could not read SwarmUI's environment"
+grep -qF -e "SWARMUI_WORKER_CONFIG" -e "$TOKEN" -e "$CONFIG" <<< "$swarm_env" && fail "the worker config reached SwarmUI's environment"
 
 echo "Checking SwarmUI listens on loopback only..."
 docker exec "$NAME" sh -c "curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://\$(hostname -i | cut -d' ' -f1):7810/ || true" \

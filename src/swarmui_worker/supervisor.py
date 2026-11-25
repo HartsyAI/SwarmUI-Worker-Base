@@ -5,7 +5,7 @@ its own thread and event loop, so it keeps serving between the provider SDK's jo
 on how that SDK runs its own loop.
 
 Lease lifecycle, per provider job/session:
-  1. `begin_lease()` issues a fresh token (unless one is fixed by the environment) and returns what
+  1. `begin_lease()` issues a fresh token (unless the startup config fixes one) and returns what
      the client needs to connect.
   2. `wait_for_release()` blocks until the worker has gone idle (or never got used, or hit its cap).
   3. `end_lease()` revokes the token, drops every open connection, and wipes outputs, so the next

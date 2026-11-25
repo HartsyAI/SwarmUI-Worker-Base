@@ -95,6 +95,8 @@ def test_config_defaults():
     ({"SWARMUI_IDLE_SECONDS": "abc"}, "must be a number"),
     ({"SWARMUI_IDLE_SECONDS": "1"}, "at least"),
     ({"SWARMUI_SHADOW_MODELS": "maybe"}, "true or false"),
+    ({"SWARMUI_WORKER_TOKEN": "t" * 40}, "set worker_token in SWARMUI_WORKER_CONFIG"),
+    ({"SWARMUI_PUBLIC_PORT": "7900"}, "set public_port in SWARMUI_WORKER_CONFIG"),
 ])
 def test_config_rejects_bad_values(env, fragment):
     with pytest.raises(ConfigError, match=fragment):
@@ -126,7 +128,7 @@ def encode(data) -> str:
 
 def test_startup_config_defaults_when_absent_or_blank():
     assert StartupConfig.from_env({}) == StartupConfig()
-    assert StartupConfig.from_env({TRANSPORT_KEY: "  "}) == StartupConfig()
+    assert StartupConfig.from_env({TRANSPORT_KEY: "  ", "SWARMUI_WORKER_TOKEN": " "}) == StartupConfig()
     assert StartupConfig.parse("{}") == StartupConfig(worker_token=None, public_port=7801, volume_path=None)
 
 
@@ -164,6 +166,12 @@ def test_startup_config_reads_blank_and_null_fields_as_unset():
     ('{"public_port": 70000}', "between"),
     ('{"volume_path": "workspace"}', "absolute path"),
     ('{"volume_path": "/a\\n/b"}', "absolute path"),
+    ('{"volume_path": "/a\\u0000b"}', "control characters"),
+    ('{"volume_path": "/a\\ud800"}', "control characters"),
+    (json.dumps({"worker_token": "a" * 40 + "\n" + "b"}), "printable ASCII"),
+    (json.dumps({"worker_token": "a" * 40 + " b"}), "printable ASCII"),
+    (json.dumps({"worker_token": "\u00e9" * 40}), "printable ASCII"),
+    (json.dumps({"worker_token": "a" * 40 + "\ud800"}), "printable ASCII"),
     ('{"worker_tokn": "x"}', "unknown field"),
     ('{"public_port": 1, "public_port": 2}', "duplicate field"),
 ])
